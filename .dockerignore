@@ -1,0 +1,8 @@
+node_modules
+dist
+engine-bin
+.git
+.env
+.env.*
+*.command
+.DS_Store
