@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpDown, BookMarked, SlidersHorizontal, Volume2, VolumeX, X } from 'lucide-react';
+import { ArrowUpDown, BookMarked, SlidersHorizontal, X } from 'lucide-react';
 import { ChessBoard } from './components/Board';
 import { CapturedStrip } from './components/CapturedTray';
 import { CoachPanel } from './components/CoachPanel';
@@ -43,7 +43,7 @@ import {
   subscribeOnlineRoom,
 } from './engine/onlineClient';
 import { exportGameNotation, moveToChineseNotation } from './engine/notation';
-import { soundEngine } from './engine/sound';
+import { type SoundPack, loadSoundPack, soundEngine } from './engine/sound';
 import {
   type Board,
   type Difficulty,
@@ -87,7 +87,7 @@ export function App() {
   const [teachingMode, setTeachingMode] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
   const [flipped, setFlipped] = useState(false);
-  const [soundOn, setSoundOn] = useState(true);
+  const [soundPack, setSoundPack] = useState<SoundPack>(() => loadSoundPack());
 
   const [savedGames, setSavedGames] = useState<SavedGame[]>(() => loadSavedGames());
   const [selectedReviewGameId, setSelectedReviewGameId] = useState<string | null>(null);
@@ -149,10 +149,13 @@ export function App() {
     [board, turn, halfMovesSinceCapture]
   );
 
-  // Sync sound engine flag
+  // Sync sound pack & preload real wooden WAV samples
   useEffect(() => {
-    soundEngine.enabled = soundOn;
-  }, [soundOn]);
+    soundEngine.setPack(soundPack);
+    if (soundPack !== 'off') {
+      soundEngine.preload();
+    }
+  }, [soundPack]);
 
   // Detect native Pikafish NNUE engine availability on startup
   useEffect(() => {
@@ -1707,15 +1710,31 @@ export function App() {
               </div>
 
               <div className="settings-row">
-                <span className="settings-label">木质落子音效</span>
-                <button
-                  type="button"
-                  className="icon-btn"
-                  onClick={() => setSoundOn((s) => !s)}
-                >
-                  {soundOn ? <Volume2 size={15} /> : <VolumeX size={15} />}
-                  {soundOn ? '已开启' : '已静音'}
-                </button>
+                <span className="settings-label">落子音效</span>
+                <div className="segmented">
+                  {(
+                    [
+                      { key: 'crisp', label: '棋摊脆拍' },
+                      { key: 'classic', label: '经典怀旧' },
+                      { key: 'off', label: '静音' },
+                    ] as { key: SoundPack; label: string }[]
+                  ).map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      className={soundPack === item.key ? 'active' : ''}
+                      onClick={() => {
+                        setSoundPack(item.key);
+                        soundEngine.setPack(item.key);
+                        if (item.key !== 'off') {
+                          soundEngine.preload().then(() => soundEngine.playMove());
+                        }
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="settings-engine-info">
