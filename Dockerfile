@@ -31,12 +31,13 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV PIKAFISH_THREADS=2
-ENV PIKAFISH_HASH=32
+ENV PIKAFISH_HASH=64
 
 COPY --from=web-builder /app/dist ./dist
 COPY --from=web-builder /app/server/prodServer.mjs ./server/prodServer.mjs
 COPY --from=pikafish-builder /build/pikafish-src/src/pikafish ./engine-bin/pikafish
 COPY --from=pikafish-builder /build/pikafish-src/src/pikafish.nnue ./engine-bin/pikafish.nnue
+RUN chmod +x /app/engine-bin/pikafish && chmod -R a+rX /app
 
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
