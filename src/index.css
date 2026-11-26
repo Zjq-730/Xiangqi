@@ -927,6 +927,42 @@ body::before {
   gap: 10px;
 }
 
+.status-row-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.resign-mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(216, 169, 98, 0.25);
+  background: rgba(18, 11, 7, 0.45);
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.resign-mini-btn:hover {
+  border-color: rgba(212, 82, 74, 0.65);
+  background: rgba(138, 28, 28, 0.28);
+  color: #f6b2aa;
+}
+
+.wood-btn.danger {
+  background: linear-gradient(180deg, #9b2c2c 0%, #6e1a1a 100%);
+  border-color: rgba(244, 148, 138, 0.45);
+  color: #fff2ef;
+}
+
+.wood-btn.danger:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
 .turn-badge {
   display: inline-flex;
   align-items: center;

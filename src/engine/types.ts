@@ -45,6 +45,7 @@ export type Difficulty = 'beginner' | 'intermediate' | 'master';
 export type GameStatus =
   | { state: 'playing'; inCheck: boolean }
   | { state: 'checkmate'; winner: Side }
+  | { state: 'resigned'; winner: Side; resignedSide: Side }
   | { state: 'draw'; reason: string };
 
 export const PIECE_LABELS: Record<Side, Record<PieceType, string>> = {

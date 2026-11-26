@@ -7,6 +7,7 @@ import {
   ChevronsRight,
   Copy,
   Download,
+  Flag,
   FlaskConical,
   Lightbulb,
   RotateCcw,
@@ -26,11 +27,13 @@ interface SidePanelProps {
   viewStep: number | null;
   canUndo: boolean;
   canHint: boolean;
+  canResign: boolean;
   sandboxActive: boolean;
   onUndo: () => void;
   onToggleSandbox: () => void;
   onHint: () => void;
   onNewGame: () => void;
+  onResign: () => void;
   onSelectStep: (step: number | null) => void;
   onCopyNotation: () => void;
   onDownloadNotation: () => void;
@@ -51,11 +54,13 @@ export const SidePanel: React.FC<SidePanelProps> = ({
   viewStep,
   canUndo,
   canHint,
+  canResign,
   sandboxActive,
   onUndo,
   onToggleSandbox,
   onHint,
   onNewGame,
+  onResign,
   onSelectStep,
   onCopyNotation,
   onDownloadNotation,
@@ -105,6 +110,9 @@ export const SidePanel: React.FC<SidePanelProps> = ({
     if (gameStatus.state === 'checkmate') {
       return gameStatus.winner === 'red' ? '红方胜' : '黑方胜';
     }
+    if (gameStatus.state === 'resigned') {
+      return gameStatus.winner === 'red' ? '红方胜（认输）' : '黑方胜（认输）';
+    }
     if (gameStatus.state === 'draw') {
       return '和棋';
     }
@@ -123,25 +131,42 @@ export const SidePanel: React.FC<SidePanelProps> = ({
         <div className="status-row">
           <div className="turn-badge">
             <span
-              className={`turn-dot ${gameStatus.state === 'checkmate' ? gameStatus.winner : turn}`}
+              className={`turn-dot ${
+                gameStatus.state === 'checkmate' || gameStatus.state === 'resigned'
+                  ? gameStatus.winner
+                  : turn
+              }`}
             />
             <span>{statusText}</span>
           </div>
 
-          {aiThinking && (
-            <span className="ai-pill">
-              <span className="thinking-dots" />
-              思考中
-            </span>
-          )}
-          {!aiThinking && gameStatus.state === 'playing' && gameStatus.inCheck && (
-            <span
-              className="ai-pill"
-              style={{ color: '#ffb5a8', borderColor: 'rgba(220,70,70,0.5)' }}
-            >
-              将军！
-            </span>
-          )}
+          <div className="status-row-right">
+            {aiThinking && (
+              <span className="ai-pill">
+                <span className="thinking-dots" />
+                思考中
+              </span>
+            )}
+            {!aiThinking && gameStatus.state === 'playing' && gameStatus.inCheck && (
+              <span
+                className="ai-pill"
+                style={{ color: '#ffb5a8', borderColor: 'rgba(220,70,70,0.5)' }}
+              >
+                将军！
+              </span>
+            )}
+            {canResign && !aiThinking && (
+              <button
+                type="button"
+                className="resign-mini-btn"
+                onClick={onResign}
+                title="中盘认输（判对手获胜并自动保存到复盘模式）"
+              >
+                <Flag size={12} />
+                认输
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="status-sub">

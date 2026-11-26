@@ -15,10 +15,11 @@ export const EvalBar: React.FC<EvalBarProps> = ({
   flipped,
 }) => {
   const { redPercent, shortScore, fullLabel, winnerTone } = (() => {
-    if (!isReplaying && gameStatus.state === 'checkmate') {
+    if (!isReplaying && (gameStatus.state === 'checkmate' || gameStatus.state === 'resigned')) {
+      const reason = gameStatus.state === 'resigned' ? '对手认输' : '绝杀';
       return gameStatus.winner === 'red'
-        ? { redPercent: 100, shortScore: '红胜', fullLabel: '红方绝杀', winnerTone: 'red' as const }
-        : { redPercent: 0, shortScore: '黑胜', fullLabel: '黑方绝杀', winnerTone: 'black' as const };
+        ? { redPercent: 100, shortScore: '红胜', fullLabel: `红方胜（${reason}）`, winnerTone: 'red' as const }
+        : { redPercent: 0, shortScore: '黑胜', fullLabel: `黑方胜（${reason}）`, winnerTone: 'black' as const };
     }
 
     const abs = Math.abs(evalScore);

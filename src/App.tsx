@@ -124,6 +124,8 @@ export function App() {
   const [showNewGameModal, setShowNewGameModal] = useState(false);
   const [pendingSide, setPendingSide] = useState<Side>('red');
   const [dismissedGameOver, setDismissedGameOver] = useState(false);
+  const [resignedSide, setResignedSide] = useState<Side | null>(null);
+  const [showResignConfirm, setShowResignConfirm] = useState(false);
 
   const workerRef = useRef<Worker | null>(null);
   const reqIdRef = useRef(0);
@@ -144,10 +146,16 @@ export function App() {
     return count;
   }, [history]);
 
-  const gameStatus: GameStatus = useMemo(
-    () => evaluateGameStatus(board, turn, halfMovesSinceCapture),
-    [board, turn, halfMovesSinceCapture]
-  );
+  const gameStatus: GameStatus = useMemo(() => {
+    if (resignedSide !== null) {
+      return {
+        state: 'resigned',
+        winner: oppositeSide(resignedSide),
+        resignedSide,
+      };
+    }
+    return evaluateGameStatus(board, turn, halfMovesSinceCapture);
+  }, [resignedSide, board, turn, halfMovesSinceCapture]);
 
   // Sync sound pack & preload real wooden WAV samples
   useEffect(() => {
@@ -182,13 +190,13 @@ export function App() {
           ? 'win'
           : 'loss';
 
-    const modeTag = playMode === 'pvp' ? '（双人）' : playMode === 'online' ? '（联机）' : '';
+    const modeTag = playMode === 'pvp' ? '·双人' : playMode === 'online' ? '·联机' : '';
     const resultText =
       gameStatus.state === 'draw'
         ? `和棋${modeTag}`
-        : gameStatus.winner === 'red'
-          ? `红方胜${modeTag}`
-          : `黑方胜${modeTag}`;
+        : gameStatus.state === 'resigned'
+          ? `${gameStatus.winner === 'red' ? '红方胜' : '黑方胜'}（${gameStatus.resignedSide === 'red' ? '红认输' : '黑认输'}${modeTag}）`
+          : `${gameStatus.winner === 'red' ? '红方胜' : '黑方胜'}${modeTag ? `（${modeTag.slice(1)}）` : ''}`;
 
     const saved = buildSavedGameFromHistory({
       id: gid,
@@ -823,6 +831,8 @@ export function App() {
       if (recs.length === 0) {
         currentGameIdRef.current = `game_${Date.now()}`;
         setDismissedGameOver(false);
+        setResignedSide(null);
+        setShowResignConfirm(false);
       }
 
       setBoard(b);
@@ -1075,6 +1085,8 @@ export function App() {
     setHintMove(null);
     setSelectedPos(null);
     setDismissedGameOver(false);
+    setResignedSide(null);
+    setShowResignConfirm(false);
 
     // Determine how many plies to pop
     let targetLen = history.length - 1;
@@ -1095,6 +1107,38 @@ export function App() {
   }, [canUndo, playMode, onlineSession, history, turn, playerSide]);
 
   const canHint = !sandboxActive && !isReplaying && !aiThinking && activeHumanSide !== null;
+
+  const canResign =
+    gameStatus.state === 'playing' &&
+    !reviewMode &&
+    !sandboxActive &&
+    !isReplaying &&
+    history.length > 0 &&
+    (playMode !== 'online' || (onlineSession !== null && onlineSession.side !== 'spectator'));
+
+  const resigningSide: Side =
+    playMode === 'pvp'
+      ? turn
+      : playMode === 'online' && onlineSession && onlineSession.side !== 'spectator'
+        ? onlineSession.side
+        : playerSide;
+
+  const handleConfirmResign = useCallback(() => {
+    if (!canResign) {
+      setShowResignConfirm(false);
+      return;
+    }
+    activeAiReqRef.current = null;
+    activeHintReqRef.current = null;
+    setAiThinking(false);
+    setHintLoading(false);
+    setSelectedPos(null);
+    setHintMove(null);
+    setShowResignConfirm(false);
+    setDismissedGameOver(false);
+    soundEngine.playGameOver(false);
+    setResignedSide(resigningSide);
+  }, [canResign, resigningSide]);
 
   const handleHint = async () => {
     if (!canHint || !activeHumanSide) return;
@@ -1156,6 +1200,8 @@ export function App() {
     setPlayerFeedback(null);
     setLastOpponentMove(null);
     setDismissedGameOver(false);
+    setResignedSide(null);
+    setShowResignConfirm(false);
     setShowNewGameModal(false);
   };
 
@@ -1179,6 +1225,8 @@ export function App() {
     setPlayerFeedback(null);
     setLastOpponentMove(null);
     setDismissedGameOver(false);
+    setResignedSide(null);
+    setShowResignConfirm(false);
   };
 
   const enterReviewMode = (targetGameId?: string) => {
@@ -1281,9 +1329,13 @@ export function App() {
         ? gameStatus.winner === 'red'
           ? '红胜'
           : '黑胜'
-        : gameStatus.state === 'draw'
-          ? gameStatus.reason
-          : '对局进行中';
+        : gameStatus.state === 'resigned'
+          ? gameStatus.winner === 'red'
+            ? '红胜（黑方认输）'
+            : '黑胜（红方认输）'
+          : gameStatus.state === 'draw'
+            ? gameStatus.reason
+            : '对局进行中';
     return exportGameNotation(history, {
       playerSide,
       difficulty: DIFFICULTY_LABELS[difficulty],
@@ -1536,10 +1588,12 @@ export function App() {
             viewStep={viewStep}
             canUndo={canUndo}
             canHint={canHint}
+            canResign={canResign}
             sandboxActive={sandboxActive}
             onUndo={handleUndo}
             onToggleSandbox={handleToggleSandbox}
             onHint={handleHint}
+            onResign={() => setShowResignConfirm(true)}
             onNewGame={() => {
               if (playMode === 'online' && onlineSession) {
                 sendOnlineReset(onlineSession.code, onlineSession.token).catch(() => {});
@@ -1793,25 +1847,57 @@ export function App() {
         </div>
       )}
 
+      {/* Resign Confirmation Modal */}
+      {showResignConfirm && (
+        <div className="modal-backdrop" onClick={() => setShowResignConfirm(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">确认认输？</div>
+            <div className="modal-desc">
+              {`${resigningSide === 'red' ? '红方' : '黑方'}中盘认负后，将直接判定${resigningSide === 'red' ? '黑方' : '红方'}获胜，同时本局会自动保存到复盘模式。`}
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="wood-btn"
+                onClick={() => setShowResignConfirm(false)}
+              >
+                继续对弈
+              </button>
+              <button
+                type="button"
+                className="wood-btn danger"
+                onClick={handleConfirmResign}
+              >
+                确认认输
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Game Over Modal */}
       {showGameOverModal && (
         <div className="modal-backdrop" onClick={() => setDismissedGameOver(true)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-title">
-              {gameStatus.state === 'checkmate'
-                ? playMode === 'pvp' || playMode === 'online'
-                  ? gameStatus.winner === 'red'
-                    ? '红方获胜'
-                    : '黑方获胜'
-                  : gameStatus.winner === playerSide
-                    ? '棋高一着'
-                    : '惜败一局'
-                : '握手言和'}
+              {gameStatus.state === 'resigned'
+                ? `${gameStatus.resignedSide === 'red' ? '红方' : '黑方'}认输`
+                : gameStatus.state === 'checkmate'
+                  ? playMode === 'pvp' || playMode === 'online'
+                    ? gameStatus.winner === 'red'
+                      ? '红方获胜'
+                      : '黑方获胜'
+                    : gameStatus.winner === playerSide
+                      ? '棋高一着'
+                      : '惜败一局'
+                  : '握手言和'}
             </div>
             <div className="modal-desc">
-              {gameStatus.state === 'checkmate'
-                ? `${gameStatus.winner === 'red' ? '红方' : '黑方'}绝杀获胜，共弈 ${history.length} 步。你可以复盘推演或导出棋谱。`
-                : `${gameStatus.reason}，共弈 ${history.length} 步。`}
+              {gameStatus.state === 'resigned'
+                ? `${gameStatus.resignedSide === 'red' ? '红方' : '黑方'}中盘认输，判定${gameStatus.winner === 'red' ? '红方' : '黑方'}获胜，共弈 ${history.length} 步。本局已自动保存，可随时进入复盘模式分析。`
+                : gameStatus.state === 'checkmate'
+                  ? `${gameStatus.winner === 'red' ? '红方' : '黑方'}绝杀获胜，共弈 ${history.length} 步。你可以复盘推演或导出棋谱。`
+                  : `${gameStatus.reason}，共弈 ${history.length} 步。`}
             </div>
             <div className="modal-actions">
               <button
