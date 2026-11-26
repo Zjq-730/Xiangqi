@@ -284,7 +284,12 @@ async function runDeepSeekStream(
   }
 
   const model = config.model.trim() || 'deepseek-flash';
-  const endpoint = '/api/deepseek/chat/completions';
+  // On static GitHub Pages there is no /api proxy; call DeepSeek official CORS-enabled endpoint directly
+  const isStaticPages =
+    typeof window !== 'undefined' && window.location.hostname.endsWith('github.io');
+  const endpoint = isStaticPages
+    ? 'https://api.deepseek.com/chat/completions'
+    : '/api/deepseek/chat/completions';
 
   try {
     const isFlashModel = model.includes('flash');

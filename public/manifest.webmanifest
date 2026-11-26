@@ -2,13 +2,13 @@
   "name": "雅弈 · 中国象棋",
   "short_name": "雅弈象棋",
   "description": "零广告典雅木质古风中国象棋，内置 Pikafish NNUE 引擎、DeepSeek 私教复盘与双设备联机。",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#1a120d",
   "theme_color": "#1e140e",
   "icons": [
     {
-      "src": "/icon.svg",
+      "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"

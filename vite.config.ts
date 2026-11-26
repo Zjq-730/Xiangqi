@@ -8,6 +8,7 @@ import { roomVitePlugin } from './server/roomBridge';
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  base: './',
   plugins: [react(), pikafishVitePlugin(rootDir), roomVitePlugin()],
   server: {
     host: true,
