@@ -16,6 +16,8 @@ interface BoardProps {
   replayStepLabel?: string;
   isSandbox?: boolean;
   sandboxMoveCount?: number;
+  highlightCoords?: boolean;
+  targetSquares?: Pos[];
   onSquareClick: (r: number, c: number) => void;
   onReturnToLive?: () => void;
   onResumeFromReplay?: () => void;
@@ -84,6 +86,8 @@ export const ChessBoard: React.FC<BoardProps> = ({
   replayStepLabel,
   isSandbox = false,
   sandboxMoveCount = 0,
+  highlightCoords = false,
+  targetSquares = [],
   onSquareClick,
   onReturnToLive,
   onResumeFromReplay,
@@ -93,6 +97,7 @@ export const ChessBoard: React.FC<BoardProps> = ({
   for (const m of legalTargets) {
     legalMap.set(`${m.to.r},${m.to.c}`, m);
   }
+  const targetSet = new Set<string>(targetSquares.map((p) => `${p.r},${p.c}`));
 
   // Convert logical (r, c) to visual (vr, vc)
   const toVisual = (r: number, c: number) => ({
@@ -134,6 +139,7 @@ export const ChessBoard: React.FC<BoardProps> = ({
       const isHintFrom = hintMove?.from.r === r && hintMove?.from.c === c;
       const isHintTo = hintMove?.to.r === r && hintMove?.to.c === c;
       const isCheckedKing = checkedKingPos?.r === r && checkedKingPos?.c === c;
+      const isTargetSquare = targetSet.has(`${r},${c}`);
       const isPlayable = Boolean(piece && interactiveSide && piece.side === interactiveSide && !isReplaying);
 
       cells.push(
@@ -145,6 +151,7 @@ export const ChessBoard: React.FC<BoardProps> = ({
           {isLastFrom && <div className="last-move-marker from" />}
           {isLastTo && <div className="last-move-marker" />}
           {(isHintFrom || isHintTo) && <div className="hint-marker" />}
+          {isTargetSquare && <div className="academy-target-ring" />}
 
           {piece && (
             <div
@@ -259,16 +266,17 @@ export const ChessBoard: React.FC<BoardProps> = ({
               汉界
             </text>
 
-            {/* Subtle file coordinates along top & bottom */}
+            {/* Subtle file coordinates along top & bottom (highlighted during notation lessons) */}
             {topNums.map((label, i) => (
               <text
                 key={`top-${i}`}
                 x={(i + 0.5) * 100}
-                y="26"
+                y={highlightCoords ? '30' : '26'}
                 textAnchor="middle"
-                fill="#5c391e"
-                opacity="0.65"
-                fontSize="20"
+                fill={highlightCoords ? '#1a3832' : '#5c391e'}
+                opacity={highlightCoords ? '0.95' : '0.65'}
+                fontSize={highlightCoords ? '28' : '20'}
+                fontWeight={highlightCoords ? '700' : '400'}
                 fontFamily='"Kaiti SC", "STKaiti", "KaiTi", serif'
               >
                 {label}
@@ -278,11 +286,12 @@ export const ChessBoard: React.FC<BoardProps> = ({
               <text
                 key={`bot-${i}`}
                 x={(i + 0.5) * 100}
-                y="988"
+                y={highlightCoords ? '992' : '988'}
                 textAnchor="middle"
-                fill="#5c391e"
-                opacity="0.65"
-                fontSize="20"
+                fill={highlightCoords ? '#a61c1c' : '#5c391e'}
+                opacity={highlightCoords ? '0.98' : '0.65'}
+                fontSize={highlightCoords ? '28' : '20'}
+                fontWeight={highlightCoords ? '700' : '400'}
                 fontFamily='"Kaiti SC", "STKaiti", "KaiTi", serif'
               >
                 {label}

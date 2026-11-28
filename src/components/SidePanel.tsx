@@ -37,6 +37,7 @@ interface SidePanelProps {
   onSelectStep: (step: number | null) => void;
   onCopyNotation: () => void;
   onDownloadNotation: () => void;
+  topSlot?: React.ReactNode;
   onlineSlot?: React.ReactNode;
   coachSlot?: React.ReactNode;
   sandboxSlot?: React.ReactNode;
@@ -64,6 +65,7 @@ export const SidePanel: React.FC<SidePanelProps> = ({
   onSelectStep,
   onCopyNotation,
   onDownloadNotation,
+  topSlot,
   onlineSlot,
   coachSlot,
   sandboxSlot,
@@ -123,6 +125,9 @@ export const SidePanel: React.FC<SidePanelProps> = ({
 
   return (
     <aside className="side-panel">
+      {/* Optional Top Sub-Navigation (e.g. Teaching Hub Tabs) */}
+      {topSlot}
+
       {/* Optional Online Room Bar (when in Two-Device Online Mode) */}
       {onlineSlot}
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUpDown, BookMarked, SlidersHorizontal, X } from 'lucide-react';
+import { AcademyPanel } from './components/AcademyPanel';
 import { ChessBoard } from './components/Board';
 import { CapturedStrip } from './components/CapturedTray';
 import { CoachPanel } from './components/CoachPanel';
@@ -9,6 +10,17 @@ import { OnlineRoomCard } from './components/OnlineRoomCard';
 import { ReviewPanel } from './components/ReviewPanel';
 import { SandboxCard } from './components/SandboxCard';
 import { SidePanel } from './components/SidePanel';
+import { type TeachingTab, TeachingSubNav } from './components/TeachingSubNav';
+import {
+  type AcademyProgress,
+  INTERACTIVE_MANUALS,
+  MICRO_LESSONS,
+  TACTIC_PUZZLES,
+  createBoardFromPieces,
+  getInitialLessonBoard,
+  loadAcademyProgress,
+  saveAcademyProgress,
+} from './data/academy';
 import { type ReviewLineResult, analyzePositionForReview, evaluateRedAdvantage } from './engine/ai';
 import type { AIWorkerRequest, AIWorkerResponse } from './engine/aiWorker';
 import {
@@ -85,7 +97,43 @@ export function App() {
   const onlineMoveLenRef = useRef<number>(0);
   const [difficulty, setDifficulty] = useState<Difficulty>('intermediate');
   const [teachingMode, setTeachingMode] = useState(false);
+  const [teachingTab, setTeachingTab] = useState<TeachingTab>('lessons');
   const [reviewMode, setReviewMode] = useState(false);
+
+  // Academy (基础微课 / 杀法闯关 / 互动棋谱) state
+  const [academyProgress, setAcademyProgress] = useState<AcademyProgress>(() => loadAcademyProgress());
+  const [lessonId, setLessonId] = useState<string>(MICRO_LESSONS[0].id);
+  const [lessonStepIdx, setLessonStepIdx] = useState(0);
+  const [lessonBoard, setLessonBoard] = useState<Board>(() =>
+    getInitialLessonBoard(MICRO_LESSONS[0].steps[0])
+  );
+  const [lessonLastMove, setLessonLastMove] = useState<Move | null>(null);
+  const [lessonStepDone, setLessonStepDone] = useState(false);
+  const [lessonFeedback, setLessonFeedback] = useState<{ tone: 'success' | 'warn'; text: string } | null>(null);
+
+  const [puzzleId, setPuzzleId] = useState<string>(TACTIC_PUZZLES[0].id);
+  const [puzzleStepIdx, setPuzzleStepIdx] = useState(0);
+  const [puzzleBoard, setPuzzleBoard] = useState<Board>(() =>
+    createBoardFromPieces(TACTIC_PUZZLES[0].pieces)
+  );
+  const [puzzleLastMove, setPuzzleLastMove] = useState<Move | null>(null);
+  const [puzzleSolved, setPuzzleSolved] = useState(false);
+  const [puzzleShowHint, setPuzzleShowHint] = useState(false);
+  const [puzzleBusy, setPuzzleBusy] = useState(false);
+  const [puzzleFeedback, setPuzzleFeedback] = useState<{
+    tone: 'success' | 'warn' | 'info';
+    text: string;
+  } | null>(null);
+
+  const [manualId, setManualId] = useState<string>(INTERACTIVE_MANUALS[0].id);
+  const [manualStepIdx, setManualStepIdx] = useState(0);
+  const [manualQuizMode, setManualQuizMode] = useState(false);
+  const [manualQuizFeedback, setManualQuizFeedback] = useState<{
+    tone: 'success' | 'warn';
+    text: string;
+  } | null>(null);
+  const [manualShowHint, setManualShowHint] = useState(false);
+  const academyTimerRef = useRef<number | null>(null);
   const [flipped, setFlipped] = useState(false);
   const [soundPack, setSoundPack] = useState<SoundPack>(() => loadSoundPack());
 
@@ -317,10 +365,194 @@ export function App() {
     };
   }, []);
 
+  const academyActive = teachingMode && !reviewMode && teachingTab !== 'coach';
+
+  const currentLesson = useMemo(
+    () => MICRO_LESSONS.find((l) => l.id === lessonId) ?? MICRO_LESSONS[0],
+    [lessonId]
+  );
+  const currentLessonStep = currentLesson.steps[lessonStepIdx] ?? currentLesson.steps[0];
+
+  const currentPuzzle = useMemo(
+    () => TACTIC_PUZZLES.find((p) => p.id === puzzleId) ?? TACTIC_PUZZLES[0],
+    [puzzleId]
+  );
+  const currentPuzzleStep = currentPuzzle.steps[puzzleStepIdx] ?? currentPuzzle.steps[0];
+
+  const currentManual = useMemo(
+    () => INTERACTIVE_MANUALS.find((m) => m.id === manualId) ?? INTERACTIVE_MANUALS[0],
+    [manualId]
+  );
+
+  const manualTimeline = useMemo(() => {
+    const boards: Board[] = [createInitialBoard()];
+    const moves: Move[] = [];
+    const notations: string[] = [];
+    let b = boards[0];
+    for (const mm of currentManual.moves) {
+      const piece = b[mm.from.r]?.[mm.from.c];
+      if (!piece) break;
+      const move: Move = {
+        from: mm.from,
+        to: mm.to,
+        piece,
+        captured: b[mm.to.r]?.[mm.to.c] ?? null,
+      };
+      notations.push(moveToChineseNotation(b, move));
+      moves.push(move);
+      b = applyMove(b, move);
+      boards.push(b);
+    }
+    return { boards, moves, notations };
+  }, [currentManual]);
+
+  const markAcademyComplete = useCallback(
+    (kind: 'lesson' | 'puzzle' | 'manual', id: string) => {
+      setAcademyProgress((prev) => {
+        const next: AcademyProgress = {
+          completedLessons:
+            kind === 'lesson' && !prev.completedLessons.includes(id)
+              ? [...prev.completedLessons, id]
+              : prev.completedLessons,
+          completedPuzzles:
+            kind === 'puzzle' && !prev.completedPuzzles.includes(id)
+              ? [...prev.completedPuzzles, id]
+              : prev.completedPuzzles,
+          completedManuals:
+            kind === 'manual' && !prev.completedManuals.includes(id)
+              ? [...prev.completedManuals, id]
+              : prev.completedManuals,
+        };
+        saveAcademyProgress(next);
+        return next;
+      });
+    },
+    []
+  );
+
+  const clearAcademyTimer = useCallback(() => {
+    if (academyTimerRef.current) {
+      window.clearTimeout(academyTimerRef.current);
+      academyTimerRef.current = null;
+    }
+  }, []);
+
+  const loadLessonStep = useCallback(
+    (targetLessonId: string, stepIndex: number) => {
+      clearAcademyTimer();
+      const lesson = MICRO_LESSONS.find((l) => l.id === targetLessonId) ?? MICRO_LESSONS[0];
+      const step = lesson.steps[stepIndex] ?? lesson.steps[0];
+      setLessonId(lesson.id);
+      setLessonStepIdx(stepIndex);
+      setLessonBoard(getInitialLessonBoard(step));
+      setLessonLastMove(null);
+      setLessonStepDone(false);
+      setLessonFeedback(null);
+      setSelectedPos(null);
+    },
+    [clearAcademyTimer]
+  );
+
+  const handleDemoLessonStep = useCallback(() => {
+    const em = currentLessonStep.expectedMoves[0];
+    if (!em) return;
+    const piece = lessonBoard[em.from.r]?.[em.from.c];
+    if (!piece) return;
+    const move: Move = {
+      from: em.from,
+      to: em.to,
+      piece,
+      captured: lessonBoard[em.to.r]?.[em.to.c] ?? null,
+    };
+    const nextB = applyMove(lessonBoard, move);
+    if (move.captured) soundEngine.playCapture();
+    else soundEngine.playMove();
+    setLessonBoard(nextB);
+    setLessonLastMove(move);
+    setLessonStepDone(true);
+    setLessonFeedback({ tone: 'success', text: currentLessonStep.successTip });
+    if (lessonStepIdx >= currentLesson.steps.length - 1) {
+      markAcademyComplete('lesson', currentLesson.id);
+    }
+  }, [currentLessonStep, lessonBoard, lessonStepIdx, currentLesson, markAcademyComplete]);
+
+  const handleNextLessonStep = useCallback(() => {
+    if (lessonStepIdx < currentLesson.steps.length - 1) {
+      loadLessonStep(currentLesson.id, lessonStepIdx + 1);
+      return;
+    }
+    const idx = MICRO_LESSONS.findIndex((l) => l.id === currentLesson.id);
+    if (idx < MICRO_LESSONS.length - 1) {
+      loadLessonStep(MICRO_LESSONS[idx + 1].id, 0);
+    } else {
+      setTeachingTab('puzzles');
+      setSelectedPos(null);
+    }
+  }, [lessonStepIdx, currentLesson, loadLessonStep]);
+
+  const loadPuzzle = useCallback(
+    (targetPuzzleId: string) => {
+      clearAcademyTimer();
+      const pz = TACTIC_PUZZLES.find((p) => p.id === targetPuzzleId) ?? TACTIC_PUZZLES[0];
+      setPuzzleId(pz.id);
+      setPuzzleStepIdx(0);
+      setPuzzleBoard(createBoardFromPieces(pz.pieces));
+      setPuzzleLastMove(null);
+      setPuzzleSolved(false);
+      setPuzzleShowHint(false);
+      setPuzzleBusy(false);
+      setPuzzleFeedback(null);
+      setSelectedPos(null);
+    },
+    [clearAcademyTimer]
+  );
+
+  const handleNextPuzzle = useCallback(() => {
+    const idx = TACTIC_PUZZLES.findIndex((p) => p.id === currentPuzzle.id);
+    if (idx < TACTIC_PUZZLES.length - 1) {
+      loadPuzzle(TACTIC_PUZZLES[idx + 1].id);
+    } else {
+      setTeachingTab('manuals');
+      setSelectedPos(null);
+    }
+  }, [currentPuzzle.id, loadPuzzle]);
+
+  const handleSelectManual = useCallback(
+    (targetManualId: string) => {
+      clearAcademyTimer();
+      setManualId(targetManualId);
+      setManualStepIdx(0);
+      setManualQuizFeedback(null);
+      setManualShowHint(false);
+      setSelectedPos(null);
+    },
+    [clearAcademyTimer]
+  );
+
+  const handleManualStepChange = useCallback(
+    (nextStep: number) => {
+      clearAcademyTimer();
+      const clamped = Math.max(0, Math.min(manualTimeline.moves.length, nextStep));
+      if (clamped > manualStepIdx && manualTimeline.moves[clamped - 1]) {
+        const mv = manualTimeline.moves[clamped - 1];
+        if (mv.captured) soundEngine.playCapture();
+        else soundEngine.playMove();
+      }
+      setManualStepIdx(clamped);
+      setManualQuizFeedback(null);
+      setManualShowHint(false);
+      setSelectedPos(null);
+      if (clamped >= manualTimeline.moves.length) {
+        markAcademyComplete('manual', currentManual.id);
+      }
+    },
+    [clearAcademyTimer, manualTimeline.moves, manualStepIdx, markAcademyComplete, currentManual.id]
+  );
+
   // Trigger AI move when it's AI's turn and we're in live AI playing state
   useEffect(() => {
     const aiSide = oppositeSide(playerSide);
-    if (playMode !== 'ai' || reviewMode || gameStatus.state !== 'playing') {
+    if (playMode !== 'ai' || reviewMode || academyActive || gameStatus.state !== 'playing') {
       setAiThinking(false);
       return;
     }
@@ -372,7 +604,7 @@ export function App() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [playMode, reviewMode, pikafishReady, board, turn, playerSide, difficulty, gameStatus.state, history.length, viewStep]);
+  }, [playMode, reviewMode, academyActive, pikafishReady, board, turn, playerSide, difficulty, gameStatus.state, history.length, viewStep]);
 
   // Teaching Mode: automatically compute and show hint on the board whenever it's a human's turn
   const activeHumanSide: Side | null =
@@ -389,7 +621,7 @@ export function App() {
             : null;
 
   useEffect(() => {
-    if (!teachingMode || reviewMode) {
+    if (!teachingMode || reviewMode || academyActive) {
       return;
     }
     if (!activeHumanSide || viewStep !== null) {
@@ -443,7 +675,7 @@ export function App() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [teachingMode, reviewMode, pikafishReady, board, activeHumanSide, history.length, viewStep]);
+  }, [teachingMode, reviewMode, academyActive, pikafishReady, board, activeHumanSide, history.length, viewStep]);
 
   // Review Mode: build list of reviewable games (saved completed games + optional current in-progress game)
   const reviewGamesList = useMemo(() => {
@@ -620,7 +852,37 @@ export function App() {
     });
   }, [sandboxActive, sandboxMoves.length, teachingMode, reviewMode, pikafishReady, sandboxBoard, sandboxTurn]);
 
+  const academyInteractiveSide: Side | null = useMemo(() => {
+    if (!academyActive) return null;
+    if (teachingTab === 'lessons') {
+      return currentLessonStep.kind === 'practice' && !lessonStepDone ? 'red' : null;
+    }
+    if (teachingTab === 'puzzles') {
+      return !puzzleSolved && !puzzleBusy ? 'red' : null;
+    }
+    if (teachingTab === 'manuals') {
+      const nextMm = currentManual.moves[manualStepIdx];
+      return manualQuizMode && nextMm?.isQuiz ? 'red' : null;
+    }
+    return null;
+  }, [
+    academyActive,
+    teachingTab,
+    currentLessonStep.kind,
+    lessonStepDone,
+    puzzleSolved,
+    puzzleBusy,
+    currentManual.moves,
+    manualStepIdx,
+    manualQuizMode,
+  ]);
+
   const displayedBoard = useMemo(() => {
+    if (academyActive) {
+      if (teachingTab === 'lessons') return lessonBoard;
+      if (teachingTab === 'puzzles') return puzzleBoard;
+      return manualTimeline.boards[manualStepIdx] ?? createInitialBoard();
+    }
     if (sandboxActive) return sandboxBoard;
     if (reviewMode) {
       if (reviewStep === 0) return createInitialBoard();
@@ -629,7 +891,22 @@ export function App() {
     if (viewStep === null) return board;
     if (viewStep === 0) return createInitialBoard();
     return history[viewStep - 1]?.boardAfter ?? board;
-  }, [sandboxActive, sandboxBoard, reviewMode, reviewStep, reviewSteps, viewStep, board, history]);
+  }, [
+    academyActive,
+    teachingTab,
+    lessonBoard,
+    puzzleBoard,
+    manualTimeline.boards,
+    manualStepIdx,
+    sandboxActive,
+    sandboxBoard,
+    reviewMode,
+    reviewStep,
+    reviewSteps,
+    viewStep,
+    board,
+    history,
+  ]);
 
   const staticEvalScore = useMemo(() => evaluateRedAdvantage(displayedBoard), [displayedBoard]);
   const evalScore = sandboxActive
@@ -642,6 +919,11 @@ export function App() {
   const captured = useMemo(() => getCapturedPieces(displayedBoard), [displayedBoard]);
 
   const displayedLastMove = useMemo(() => {
+    if (academyActive) {
+      if (teachingTab === 'lessons') return lessonLastMove;
+      if (teachingTab === 'puzzles') return puzzleLastMove;
+      return manualStepIdx > 0 ? manualTimeline.moves[manualStepIdx - 1] ?? null : null;
+    }
     if (sandboxActive) {
       return sandboxMoves.length > 0 ? sandboxMoves[sandboxMoves.length - 1].move : null;
     }
@@ -654,11 +936,38 @@ export function App() {
     }
     if (viewStep === 0) return null;
     return history[viewStep - 1]?.move ?? null;
-  }, [sandboxActive, sandboxMoves, reviewMode, reviewStep, reviewSteps, viewStep, history]);
+  }, [
+    academyActive,
+    teachingTab,
+    lessonLastMove,
+    puzzleLastMove,
+    manualStepIdx,
+    manualTimeline.moves,
+    sandboxActive,
+    sandboxMoves,
+    reviewMode,
+    reviewStep,
+    reviewSteps,
+    viewStep,
+    history,
+  ]);
 
   // In Sandbox Mode: show engine's strongest counter-move arrow.
   // In Review Mode: show green arrow for engine's better move when it differs from played move.
   const displayedHintMove = useMemo(() => {
+    if (academyActive) {
+      if (teachingTab === 'puzzles' && puzzleShowHint && !puzzleSolved) {
+        const em = currentPuzzleStep.playerMoves[0];
+        const p = em ? puzzleBoard[em.from.r]?.[em.from.c] : null;
+        if (em && p) {
+          return { from: em.from, to: em.to, piece: p, captured: puzzleBoard[em.to.r]?.[em.to.c] ?? null };
+        }
+      }
+      if (teachingTab === 'manuals' && manualQuizMode && manualShowHint) {
+        return manualTimeline.moves[manualStepIdx] ?? null;
+      }
+      return null;
+    }
     if (sandboxActive) {
       return sandboxAnalysis?.bestMove ?? null;
     }
@@ -678,9 +987,32 @@ export function App() {
       return best;
     }
     return isReplaying ? null : hintMove;
-  }, [sandboxActive, sandboxAnalysis, reviewMode, engineReview, reviewStep, reviewSteps, isReplaying, hintMove]);
+  }, [
+    academyActive,
+    teachingTab,
+    puzzleShowHint,
+    puzzleSolved,
+    currentPuzzleStep,
+    puzzleBoard,
+    manualQuizMode,
+    manualShowHint,
+    manualTimeline.moves,
+    manualStepIdx,
+    sandboxActive,
+    sandboxAnalysis,
+    reviewMode,
+    engineReview,
+    reviewStep,
+    reviewSteps,
+    isReplaying,
+    hintMove,
+  ]);
 
   const legalTargets = useMemo(() => {
+    if (academyActive) {
+      if (!selectedPos || !academyInteractiveSide) return [];
+      return getLegalMovesForSquare(displayedBoard, selectedPos.r, selectedPos.c);
+    }
     if (sandboxActive) {
       if (!selectedPos) return [];
       return getLegalMovesForSquare(sandboxBoard, selectedPos.r, selectedPos.c);
@@ -689,9 +1021,26 @@ export function App() {
       return [];
     }
     return getLegalMovesForSquare(board, selectedPos.r, selectedPos.c);
-  }, [sandboxActive, sandboxBoard, reviewMode, board, selectedPos, isReplaying, activeHumanSide]);
+  }, [
+    academyActive,
+    academyInteractiveSide,
+    displayedBoard,
+    sandboxActive,
+    sandboxBoard,
+    reviewMode,
+    board,
+    selectedPos,
+    isReplaying,
+    activeHumanSide,
+  ]);
 
   const checkedKingPos = useMemo(() => {
+    if (academyActive) {
+      if (teachingTab === 'puzzles' && isInCheck(puzzleBoard, 'black')) {
+        return findGeneral(puzzleBoard, 'black');
+      }
+      return null;
+    }
     if (sandboxActive) {
       if (isInCheck(sandboxBoard, sandboxTurn)) {
         return findGeneral(sandboxBoard, sandboxTurn);
@@ -719,7 +1068,24 @@ export function App() {
       return findGeneral(board, oppositeSide(gameStatus.winner));
     }
     return null;
-  }, [sandboxActive, sandboxBoard, sandboxTurn, reviewMode, reviewStep, reviewSteps, isReplaying, viewStep, history, displayedBoard, gameStatus, board, turn]);
+  }, [
+    academyActive,
+    teachingTab,
+    puzzleBoard,
+    sandboxActive,
+    sandboxBoard,
+    sandboxTurn,
+    reviewMode,
+    reviewStep,
+    reviewSteps,
+    isReplaying,
+    viewStep,
+    history,
+    displayedBoard,
+    gameStatus,
+    board,
+    turn,
+  ]);
 
   const enterSandbox = useCallback(() => {
     setSelectedPos(null);
@@ -989,6 +1355,170 @@ export function App() {
   }, [reviewMode, sandboxActive, sandboxMoves, activeHumanSide, sandboxBaseTurn, exitSandbox, playPlayerMove]);
 
   const handleSquareClick = (r: number, c: number) => {
+    // Academy (基础微课 / 杀法闯关 / 互动棋谱自测) interaction
+    if (academyActive) {
+      if (!academyInteractiveSide) return;
+      const clickedPiece = displayedBoard[r][c];
+      if (selectedPos) {
+        const targetMove = legalTargets.find((m) => m.to.r === r && m.to.c === c);
+        if (targetMove) {
+          // 1. Micro-Lesson practice
+          if (teachingTab === 'lessons') {
+            const matched = currentLessonStep.expectedMoves.some(
+              (em) =>
+                em.from.r === targetMove.from.r &&
+                em.from.c === targetMove.from.c &&
+                em.to.r === targetMove.to.r &&
+                em.to.c === targetMove.to.c
+            );
+            if (matched) {
+              const nextB = applyMove(lessonBoard, targetMove);
+              if (targetMove.captured) soundEngine.playCapture();
+              else soundEngine.playMove();
+              setLessonBoard(nextB);
+              setLessonLastMove(targetMove);
+              setLessonStepDone(true);
+              setLessonFeedback({ tone: 'success', text: currentLessonStep.successTip });
+              if (lessonStepIdx >= currentLesson.steps.length - 1) {
+                markAcademyComplete('lesson', currentLesson.id);
+              }
+            } else {
+              soundEngine.playSelect();
+              setLessonFeedback({ tone: 'warn', text: currentLessonStep.wrongHint });
+            }
+            setSelectedPos(null);
+            return;
+          }
+
+          // 2. Tactic Puzzle
+          if (teachingTab === 'puzzles') {
+            const nextB = applyMove(puzzleBoard, targetMove);
+            const statusAfter = evaluateGameStatus(nextB, 'black', 0);
+            const matchedStep = currentPuzzleStep.playerMoves.some(
+              (pm) =>
+                pm.from.r === targetMove.from.r &&
+                pm.from.c === targetMove.from.c &&
+                pm.to.r === targetMove.to.r &&
+                pm.to.c === targetMove.to.c
+            );
+            const isDirectMate = statusAfter.state === 'checkmate' && statusAfter.winner === 'red';
+
+            if (matchedStep || isDirectMate) {
+              if (targetMove.captured) soundEngine.playCapture();
+              else soundEngine.playMove();
+              setPuzzleBoard(nextB);
+              setPuzzleLastMove(targetMove);
+              setSelectedPos(null);
+
+              const isFinal = isDirectMate || puzzleStepIdx >= currentPuzzle.steps.length - 1;
+              if (isFinal) {
+                soundEngine.playGameOver(true);
+                setPuzzleSolved(true);
+                setPuzzleShowHint(false);
+                setPuzzleFeedback({ tone: 'success', text: '绝杀通关！漂亮！' });
+                markAcademyComplete('puzzle', currentPuzzle.id);
+              } else if (currentPuzzleStep.opponentReply) {
+                soundEngine.playCheck();
+                setPuzzleBusy(true);
+                setPuzzleShowHint(false);
+                setPuzzleFeedback({ tone: 'info', text: '好棋将军！看黑方被迫应招…' });
+                const reply = currentPuzzleStep.opponentReply;
+                clearAcademyTimer();
+                academyTimerRef.current = window.setTimeout(() => {
+                  const repPiece = nextB[reply.from.r]?.[reply.from.c];
+                  if (repPiece) {
+                    const repMove: Move = {
+                      from: reply.from,
+                      to: reply.to,
+                      piece: repPiece,
+                      captured: nextB[reply.to.r]?.[reply.to.c] ?? null,
+                    };
+                    const afterReply = applyMove(nextB, repMove);
+                    if (repMove.captured) soundEngine.playCapture();
+                    else soundEngine.playMove();
+                    setPuzzleBoard(afterReply);
+                    setPuzzleLastMove(repMove);
+                  }
+                  setPuzzleStepIdx((idx) => idx + 1);
+                  setPuzzleBusy(false);
+                  setPuzzleFeedback({ tone: 'info', text: '黑方应招完毕，请走下一步绝杀！' });
+                }, 480);
+              }
+            } else {
+              soundEngine.playSelect();
+              setPuzzleFeedback({
+                tone: 'warn',
+                text: '这步还杀不死黑将，换个思路再试试！（可点下方「看提示」）',
+              });
+              setSelectedPos(null);
+            }
+            return;
+          }
+
+          // 3. Interactive Manual Quiz
+          if (teachingTab === 'manuals') {
+            const expected = currentManual.moves[manualStepIdx];
+            if (
+              expected &&
+              expected.from.r === targetMove.from.r &&
+              expected.from.c === targetMove.from.c &&
+              expected.to.r === targetMove.to.r &&
+              expected.to.c === targetMove.to.c
+            ) {
+              if (targetMove.captured) soundEngine.playCapture();
+              else soundEngine.playMove();
+              const nextIdx = manualStepIdx + 1;
+              setManualStepIdx(nextIdx);
+              setManualShowHint(false);
+              setManualQuizFeedback({
+                tone: 'success',
+                text: `走对了！正是「${manualTimeline.notations[manualStepIdx] ?? ''}」`,
+              });
+              setSelectedPos(null);
+
+              if (nextIdx >= currentManual.moves.length) {
+                markAcademyComplete('manual', currentManual.id);
+              } else if (!currentManual.moves[nextIdx].isQuiz) {
+                clearAcademyTimer();
+                academyTimerRef.current = window.setTimeout(() => {
+                  const autoMv = manualTimeline.moves[nextIdx];
+                  if (autoMv) {
+                    if (autoMv.captured) soundEngine.playCapture();
+                    else soundEngine.playMove();
+                  }
+                  const afterAuto = nextIdx + 1;
+                  setManualStepIdx(afterAuto);
+                  setManualQuizFeedback(null);
+                  if (afterAuto >= currentManual.moves.length) {
+                    markAcademyComplete('manual', currentManual.id);
+                  }
+                }, 600);
+              }
+            } else {
+              soundEngine.playSelect();
+              setManualQuizFeedback({
+                tone: 'warn',
+                text: '这步不是本谱正招，再试试看（或点下方「提示」）',
+              });
+              setSelectedPos(null);
+            }
+            return;
+          }
+        }
+        if (selectedPos.r === r && selectedPos.c === c) {
+          setSelectedPos(null);
+          return;
+        }
+      }
+      if (clickedPiece && clickedPiece.side === academyInteractiveSide) {
+        soundEngine.playSelect();
+        setSelectedPos({ r, c });
+      } else {
+        setSelectedPos(null);
+      }
+      return;
+    }
+
     // Sandbox ("试走摆变化") interaction: freely play legal moves for either side without affecting the real game
     if (sandboxActive) {
       const clickedPiece = sandboxBoard[r][c];
@@ -1316,7 +1846,8 @@ export function App() {
       : 'play';
 
   const showEvalBar =
-    evalBarMode === 'always' || (evalBarMode === 'auto' && (teachingMode || reviewMode));
+    !academyActive &&
+    (evalBarMode === 'always' || (evalBarMode === 'auto' && (teachingMode || reviewMode)));
 
   const topLostSide: Side = flipped ? 'red' : 'black';
   const bottomLostSide: Side = flipped ? 'black' : 'red';
@@ -1402,7 +1933,29 @@ export function App() {
   }, [reviewMode, reviewStep, reviewSteps.length, handleUndo, history.length, viewStep]);
 
   const showGameOverModal =
-    !reviewMode && !sandboxActive && gameStatus.state !== 'playing' && !dismissedGameOver && !isReplaying;
+    !academyActive &&
+    !reviewMode &&
+    !sandboxActive &&
+    gameStatus.state !== 'playing' &&
+    !dismissedGameOver &&
+    !isReplaying;
+
+  const academyHighlightCoords =
+    academyActive &&
+    ((teachingTab === 'lessons' && Boolean(currentLessonStep.highlightCoords)) ||
+      teachingTab === 'manuals');
+
+  const academyTargetSquares =
+    academyActive && teachingTab === 'lessons' && !lessonStepDone
+      ? currentLessonStep.targetSquares ?? []
+      : [];
+
+  const handleSelectTeachingTab = (tab: TeachingTab) => {
+    clearAcademyTimer();
+    exitSandbox();
+    setSelectedPos(null);
+    setTeachingTab(tab);
+  };
 
   const sandboxCardElement = sandboxActive ? (
     <SandboxCard
@@ -1516,35 +2069,47 @@ export function App() {
           )}
 
           <div className="board-column">
-            <CapturedStrip side={topLostSide} pieces={topLostPieces} />
+            {!academyActive && <CapturedStrip side={topLostSide} pieces={topLostPieces} />}
 
             <ChessBoard
               board={displayedBoard}
-              flipped={flipped}
-              selectedPos={sandboxActive ? selectedPos : reviewMode || isReplaying ? null : selectedPos}
+              flipped={academyActive ? false : flipped}
+              selectedPos={
+                academyActive
+                  ? selectedPos
+                  : sandboxActive
+                    ? selectedPos
+                    : reviewMode || isReplaying
+                      ? null
+                      : selectedPos
+              }
               legalTargets={legalTargets}
               lastMove={displayedLastMove}
               hintMove={displayedHintMove}
               checkedKingPos={checkedKingPos}
               interactiveSide={
-                sandboxActive
-                  ? sandboxTurn
-                  : !reviewMode && !isReplaying && !aiThinking
-                    ? activeHumanSide
-                    : null
+                academyActive
+                  ? academyInteractiveSide
+                  : sandboxActive
+                    ? sandboxTurn
+                    : !reviewMode && !isReplaying && !aiThinking
+                      ? activeHumanSide
+                      : null
               }
-              showCheckToast={!reviewMode && !sandboxActive && showCheckToast}
-              isReplaying={isReplaying}
+              showCheckToast={!academyActive && !reviewMode && !sandboxActive && showCheckToast}
+              isReplaying={!academyActive && isReplaying}
               replayStepLabel={viewStep === 0 ? '开局局面' : `第 ${viewStep} 步`}
-              isSandbox={sandboxActive}
+              isSandbox={!academyActive && sandboxActive}
               sandboxMoveCount={sandboxMoves.length}
+              highlightCoords={academyHighlightCoords}
+              targetSquares={academyTargetSquares}
               onSquareClick={handleSquareClick}
               onReturnToLive={() => setViewStep(null)}
               onResumeFromReplay={handleResumeFromReplay}
               onExitSandbox={exitSandbox}
             />
 
-            <CapturedStrip side={bottomLostSide} pieces={bottomLostPieces} />
+            {!academyActive && <CapturedStrip side={bottomLostSide} pieces={bottomLostPieces} />}
           </div>
         </div>
 
@@ -1575,8 +2140,60 @@ export function App() {
             }}
             onExitReview={exitReviewMode}
           />
+        ) : academyActive ? (
+          <AcademyPanel
+            activeTab={teachingTab as Exclude<TeachingTab, 'coach'>}
+            onSelectTab={handleSelectTeachingTab}
+            progress={academyProgress}
+            lessonId={lessonId}
+            lessonStepIdx={lessonStepIdx}
+            lessonStepDone={lessonStepDone}
+            lessonFeedback={lessonFeedback}
+            onSelectLesson={(id) => loadLessonStep(id, 0)}
+            onDemoLessonStep={handleDemoLessonStep}
+            onNextLessonStep={handleNextLessonStep}
+            onResetLessonStep={() => loadLessonStep(lessonId, lessonStepIdx)}
+            puzzleId={puzzleId}
+            puzzleStepIdx={puzzleStepIdx}
+            puzzleSolved={puzzleSolved}
+            puzzleShowHint={puzzleShowHint}
+            puzzleFeedback={puzzleFeedback}
+            onSelectPuzzle={loadPuzzle}
+            onTogglePuzzleHint={() => setPuzzleShowHint((v) => !v)}
+            onResetPuzzle={() => loadPuzzle(puzzleId)}
+            onNextPuzzle={handleNextPuzzle}
+            manualId={manualId}
+            manualStepIdx={manualStepIdx}
+            manualQuizMode={manualQuizMode}
+            manualNotations={manualTimeline.notations}
+            manualQuizFeedback={manualQuizFeedback}
+            manualShowHint={manualShowHint}
+            onSelectManual={handleSelectManual}
+            onManualStepChange={handleManualStepChange}
+            onToggleManualQuizMode={(quiz) => {
+              clearAcademyTimer();
+              setManualQuizMode(quiz);
+              setManualStepIdx(0);
+              setManualQuizFeedback(null);
+              setManualShowHint(false);
+              setSelectedPos(null);
+            }}
+            onToggleManualHint={() => setManualShowHint((v) => !v)}
+            onResetManual={() => handleSelectManual(manualId)}
+          />
         ) : (
           <SidePanel
+            topSlot={
+              teachingMode ? (
+                <TeachingSubNav
+                  activeTab={teachingTab}
+                  onSelectTab={handleSelectTeachingTab}
+                  lessonProgressText={`${academyProgress.completedLessons.length}/${MICRO_LESSONS.length}`}
+                  puzzleProgressText={`${academyProgress.completedPuzzles.length}/${TACTIC_PUZZLES.length}`}
+                  manualProgressText={`${academyProgress.completedManuals.length}/${INTERACTIVE_MANUALS.length}`}
+                />
+              ) : undefined
+            }
             playMode={playMode}
             difficultyLabel={DIFFICULTY_LABELS[difficulty]}
             turn={turn}
